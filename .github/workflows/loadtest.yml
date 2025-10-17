@@ -116,6 +116,12 @@ jobs:
         with:
           ref: ${{ needs.check-trigger.outputs.branch_name }}
 
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
       - name: Sanitize branch name
         id: sanitize
         run: |
@@ -147,6 +153,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
 
       - name: Sanitize branch name
         id: sanitize
@@ -223,6 +235,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
 
       - name: Sanitize branch name
         id: sanitize
