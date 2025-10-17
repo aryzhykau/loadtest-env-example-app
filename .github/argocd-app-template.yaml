@@ -1,0 +1,64 @@
+# ArgoCD Application Template for Ephemeral Load Test Environments
+# This file is a template - substitute {BRANCH_NAME} with the actual branch name
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loadtest-{BRANCH_NAME}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io  # Ensures cleanup when app is deleted
+spec:
+  project: default
+  source:
+    repoURL: "https://github.com/aryzhykau/loadtest-env-example-app.git"
+    targetRevision: "{BRANCH_NAME}"  # Use the PR branch
+    path: "app/helm/loadtest-app"
+    helm:
+      valueFiles:
+        - values-dev.yaml
+      values: |
+        image:
+          repository: loadtest/app
+          tag: "{BRANCH_NAME}"
+          pullPolicy: Always
+        frontend:
+          image:
+            repository: loadtest/frontend
+            tag: "{BRANCH_NAME}"
+            pullPolicy: Always
+        backend:
+          replicaCount: 2
+        workers:
+          replicaCount: 2
+        mongodb:
+          auth:
+            enabled: true
+            username: root
+            password: "test123"
+            rootPassword: "test123"
+        ingress:
+          enabled: true
+          hosts:
+            - host: loadtest-{BRANCH_NAME}.local
+              paths:
+                - path: /api
+                  pathType: Prefix
+                  backend: backend
+                - path: /
+                  pathType: Prefix
+                  backend: frontend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: loadtest-{BRANCH_NAME}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

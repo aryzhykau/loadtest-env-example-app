@@ -1,0 +1,243 @@
+name: Load Test with Ephemeral Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to test (leave empty for current branch)'
+        required: false
+        type: string
+      users:
+        description: 'Number of concurrent users'
+        required: false
+        default: '50'
+        type: string
+      spawn_rate:
+        description: 'User spawn rate (users/second)'
+        required: false
+        default: '5'
+        type: string
+      duration:
+        description: 'Test duration (e.g., 5m, 300s)'
+        required: false
+        default: '5m'
+        type: string
+  pull_request:
+    types: [labeled]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BACKEND: ${{ github.repository }}/loadtest-app
+  IMAGE_NAME_FRONTEND: ${{ github.repository }}/loadtest-frontend
+
+jobs:
+  # Only run if manually triggered or if PR has 'loadtest' label
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      branch_name: ${{ steps.check.outputs.branch_name }}
+    steps:
+      - name: Check if workflow should run
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            BRANCH="${{ inputs.branch }}"
+            if [ -z "$BRANCH" ]; then
+              BRANCH="${{ github.ref_name }}"
+            fi
+            echo "branch_name=$BRANCH" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ contains(github.event.pull_request.labels.*.name, 'loadtest') }}" = "true" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "branch_name=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-images:
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should_run == 'true'
+    runs-on: self-hosted  # ARC runner in Kubernetes
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sanitize branch name for tag
+        id: sanitize
+        run: |
+          BRANCH="${{ needs.check-trigger.outputs.branch_name }}"
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          echo "tag=$SANITIZED" >> $GITHUB_OUTPUT
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.sanitize.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.sanitize.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  create-environment:
+    needs: [check-trigger, build-images]
+    runs-on: self-hosted  # ARC runner in Kubernetes
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Sanitize branch name
+        id: sanitize
+        run: |
+          BRANCH="${{ needs.check-trigger.outputs.branch_name }}"
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          echo "branch=$SANITIZED" >> $GITHUB_OUTPUT
+
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/*.sh
+
+      - name: Create ArgoCD Application
+        run: |
+          .github/scripts/create-argocd-app.sh ${{ steps.sanitize.outputs.branch }}
+
+      - name: Wait for Application to sync
+        run: |
+          .github/scripts/wait-for-sync.sh ${{ steps.sanitize.outputs.branch }} 600
+
+      - name: Verify pods are running
+        run: |
+          kubectl get pods -n loadtest-${{ steps.sanitize.outputs.branch }}
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=loadtest-${{ steps.sanitize.outputs.branch }} -n loadtest-${{ steps.sanitize.outputs.branch }} --timeout=300s
+
+  run-loadtest:
+    needs: [check-trigger, create-environment]
+    runs-on: self-hosted  # ARC runner in Kubernetes
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Sanitize branch name
+        id: sanitize
+        run: |
+          BRANCH="${{ needs.check-trigger.outputs.branch_name }}"
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          echo "branch=$SANITIZED" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Locust
+        run: |
+          pip install locust
+
+      - name: Add /etc/hosts entry for test domain
+        run: |
+          INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -z "$INGRESS_IP" ]; then
+            INGRESS_IP="127.0.0.1"
+          fi
+          echo "$INGRESS_IP loadtest-${{ steps.sanitize.outputs.branch }}.local" | sudo tee -a /etc/hosts
+
+      - name: Run Locust load test
+        run: |
+          cd loadtest
+          locust \
+            -f locustfile.py \
+            --host=http://loadtest-${{ steps.sanitize.outputs.branch }}.local \
+            --users=${{ inputs.users || '50' }} \
+            --spawn-rate=${{ inputs.spawn_rate || '5' }} \
+            --run-time=${{ inputs.duration || '5m' }} \
+            --headless \
+            --html=report.html \
+            --csv=results \
+            --exit-code-on-error=0
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loadtest-results-${{ steps.sanitize.outputs.branch }}
+          path: |
+            loadtest/report.html
+            loadtest/results_*.csv
+          retention-days: 30
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Load Test Results for branch: ${{ needs.check-trigger.outputs.branch_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Parameters:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Users: ${{ inputs.users || '50' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Spawn Rate: ${{ inputs.spawn_rate || '5' }} users/sec" >> $GITHUB_STEP_SUMMARY
+          echo "- Duration: ${{ inputs.duration || '5m' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "loadtest/results_stats.csv" ]; then
+            echo "**Results Summary:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -n 20 loadtest/results_stats.csv >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  cleanup-environment:
+    needs: [check-trigger, run-loadtest]
+    if: always()
+    runs-on: self-hosted  # ARC runner in Kubernetes
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-trigger.outputs.branch_name }}
+
+      - name: Sanitize branch name
+        id: sanitize
+        run: |
+          BRANCH="${{ needs.check-trigger.outputs.branch_name }}"
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          echo "branch=$SANITIZED" >> $GITHUB_OUTPUT
+
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/*.sh
+
+      - name: Delete ArgoCD Application
+        run: |
+          .github/scripts/delete-argocd-app.sh ${{ steps.sanitize.outputs.branch }}
+
+      - name: Clean up /etc/hosts entry
+        run: |
+          sudo sed -i '/loadtest-${{ steps.sanitize.outputs.branch }}.local/d' /etc/hosts || true
