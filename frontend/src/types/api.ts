@@ -2,7 +2,7 @@
  * API configuration and types
  */
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export interface DataEntry {
   _id: string;
@@ -35,7 +35,7 @@ export interface TaskCreate {
 
 export interface TaskResponse {
   task_id: string;
-  status: 'pending' | 'started' | 'success' | 'failure' | 'retry';
+  status: 'pending' | 'started' | 'progress' | 'success' | 'failure' | 'retry';
   task_type: string;
   created_at: string;
   result?: any;

@@ -1,0 +1,17 @@
+{{- if .Values.mongodb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "loadtest-app.fullname" . }}-mongodb
+  labels:
+    {{- include "loadtest-app.componentLabels" (dict "component" "mongodb" "root" .) | nindent 4 }}
+spec:
+  type: {{ .Values.mongodb.service.type }}
+  ports:
+  - port: {{ .Values.mongodb.service.port }}
+    targetPort: mongodb
+    protocol: TCP
+    name: mongodb
+  selector:
+    {{- include "loadtest-app.componentSelectorLabels" (dict "component" "mongodb" "root" .) | nindent 4 }}
+{{- end }}

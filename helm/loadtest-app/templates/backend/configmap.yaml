@@ -1,0 +1,18 @@
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loadtest-app.fullname" . }}-backend-config
+  labels:
+    {{- include "loadtest-app.componentLabels" (dict "component" "backend" "root" .) | nindent 4 }}
+data:
+  MONGODB_URL: {{ include "loadtest-app.mongodbUrl" . | quote }}
+  MONGODB_DATABASE: {{ .Values.mongodb.auth.database | quote }}
+  REDIS_URL: {{ include "loadtest-app.redisUrl" . | quote }}
+  CELERY_BROKER_URL: {{ include "loadtest-app.redisUrl" . | quote }}
+  CELERY_RESULT_BACKEND: {{ printf "redis://%s-redis:%d/1" (include "loadtest-app.fullname" .) (.Values.redis.service.port | int) | quote }}
+  APP_ENV: {{ .Values.global.environment | quote }}
+  {{- range $key, $value := .Values.backend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,69 @@
+1. Get the application URL by running these commands:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.backend.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "loadtest-app.fullname" . }}-backend)
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.backend.service.type }}
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch the status of by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "loadtest-app.fullname" . }}-backend'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "loadtest-app.fullname" . }}-backend --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.backend.service.port }}
+{{- else if contains "ClusterIP" .Values.backend.service.type }}
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "loadtest-app.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=backend" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+{{- end }}
+
+2. Check the status of the deployment:
+  kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }}"
+
+3. View backend logs:
+  kubectl logs --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "loadtest-app.name" . }},app.kubernetes.io/component=backend" --tail=100 -f
+
+4. View worker logs:
+  kubectl logs --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "loadtest-app.name" . }},app.kubernetes.io/component=worker" --tail=100 -f
+
+5. Access the API documentation:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}/docs
+{{- end }}
+{{- end }}
+
+Components deployed:
+  - Backend API: {{ .Values.backend.replicaCount }} replica(s)
+  - Frontend: {{ .Values.frontend.replicaCount }} replica(s)
+  - Workers: {{ .Values.workers.replicaCount }} replica(s)
+  {{- if .Values.mongodb.enabled }}
+  - MongoDB: 1 instance
+  {{- end }}
+  {{- if .Values.redis.enabled }}
+  - Redis: 1 instance
+  {{- end }}
+
+{{- if .Values.backend.autoscaling.enabled }}
+
+Autoscaling is enabled for backend:
+  - Min replicas: {{ .Values.backend.autoscaling.minReplicas }}
+  - Max replicas: {{ .Values.backend.autoscaling.maxReplicas }}
+{{- end }}
+
+{{- if .Values.workers.autoscaling.enabled }}
+
+Autoscaling is enabled for workers:
+  - Min replicas: {{ .Values.workers.autoscaling.minReplicas }}
+  - Max replicas: {{ .Values.workers.autoscaling.maxReplicas }}
+{{- end }}
+
+{{- if not .Values.mongodb.auth.password }}
+
+WARNING: MongoDB password was auto-generated. To retrieve it:
+  kubectl get secret --namespace {{ .Release.Namespace }} {{ include "loadtest-app.fullname" . }}-mongodb-secret -o jsonpath="{.data.mongodb-password}" | base64 -d
+{{- end }}

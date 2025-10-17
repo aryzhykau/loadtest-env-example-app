@@ -20,11 +20,11 @@ class MongoDB:
     def connect(self):
         """Connect to MongoDB."""
         try:
-            self.client = MongoClient(settings.mongodb_url)
+            self.client = MongoClient(settings.mongodb_connection_url)
             self.db = self.client[settings.mongodb_database]
             # Test connection
             self.client.admin.command('ping')
-            logger.info(f"Connected to MongoDB: {settings.mongodb_url}")
+            logger.info(f"Connected to MongoDB successfully")
         except Exception as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
             raise

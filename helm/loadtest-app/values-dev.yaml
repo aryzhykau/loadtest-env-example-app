@@ -1,0 +1,99 @@
+# Development Environment Values
+# Override default values for local development
+
+global:
+  environment: development
+
+# Use dev/latest tags during development
+image:
+  repository: loadtest/app
+  tag: "dev-latest"
+  pullPolicy: Always
+
+# Reduce replicas for local development
+backend:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: loadtest/frontend
+    tag: "dev-latest"
+    pullPolicy: Always
+  autoscaling:
+    enabled: false
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+workers:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# Disable persistence for faster local testing
+redis:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+mongodb:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+  auth:
+    password: "devpass123"
+    rootPassword: "devroot123"
+
+# Use local domain
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  hosts:
+    - host: loadtest.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: backend
+        - path: /
+          pathType: Prefix
+          backend: frontend
+  tls: []
+
+# Disable monitoring for local dev
+monitoring:
+  enabled: false
