@@ -12,7 +12,7 @@ spec:
   source:
     repoURL: "https://github.com/aryzhykau/loadtest-env-example-app.git"
     targetRevision: "{BRANCH_NAME}"  # Use the PR branch
-    path: "app/helm/loadtest-app"
+    path: "helm/loadtest-app"
     helm:
       valueFiles:
         - values-dev.yaml
